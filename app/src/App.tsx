@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ShapeId, ShapeKind } from "@wb/crdt";
 import { Canvas } from "./Canvas.js";
 import { useBackend, type BackendKind } from "./useBackend.js";
+import { APP_VERSION } from "./version.js";
 
 const BACKENDS: BackendKind[] = ["yjs", "automerge", "loro"];
 const PALETTE = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7"];
@@ -101,6 +102,7 @@ export function App() {
         <button onClick={undo}>undo</button>
         <button onClick={redo}>redo</button>
         <span style={{ marginLeft: "auto", color: "#6b7280" }}>{shapes.length} shapes</span>
+        <span style={{ color: "#9ca3af", fontSize: 12 }}>{APP_VERSION}</span>
       </div>
 
       <div style={{ flex: 1 }}>

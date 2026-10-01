@@ -1,0 +1,13 @@
+{
+  "name": "@wb/bench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/run-all.js",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@wb/crdt": "workspace:*"
+  }
+}

@@ -1,0 +1,19 @@
+node_modules/
+.pnpm-store/
+
+dist/
+build/
+*.tsbuildinfo
+
+.vite/
+coverage/
+.env
+.env.*
+!.env.example
+
+# Editor und Betriebssystem
+.DS_Store
+.idea/
+*.log
+.prettierignore
+.prettierrc.json

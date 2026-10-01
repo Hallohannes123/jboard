@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./crdt" },
+    { "path": "./server" },
+    { "path": "./bench" },
+    { "path": "./app" }
+  ]
+}

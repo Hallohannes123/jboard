@@ -1,0 +1,22 @@
+{
+  "name": "@wb/crdt",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@automerge/automerge": "3.3.2",
+    "loro-crdt": "1.13.8",
+    "yjs": "13.6.31"
+  }
+}

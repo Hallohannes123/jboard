@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ShapeId, ShapeKind } from "@wb/crdt";
 import { Canvas } from "./Canvas.js";
 import { useBackend, type BackendKind } from "./useBackend.js";
+import { usePresence } from "./usePresence.js";
 import { APP_VERSION } from "./version.js";
 
 const BACKENDS: BackendKind[] = ["yjs", "automerge", "loro"];
@@ -32,12 +33,23 @@ export function App() {
   const [tool, setTool] = useState<ShapeKind>("rect");
   const [fill, setFill] = useState(PALETTE[0]!);
   const [selectedId, setSelectedId] = useState<ShapeId | null>(null);
-  const { shapes, addShape, moveShape, deleteShape, undo, redo } = useBackend(kind);
+  const { shapes, addShape, moveShape, deleteShape, patchShape, undo, redo } = useBackend(kind);
+  const [identity] = useState(() => ({
+    name: `user-${Math.floor(Math.random() * 1000)}`,
+    color: PALETTE[Math.floor(Math.random() * PALETTE.length)]!,
+  }));
+  const { peers, setLocal } = usePresence("main", identity);
 
   const create = (x: number, y: number) => {
     const s = defaults(tool, x, y, fill);
     addShape(s);
     setSelectedId(s.id);
+  };
+
+  // farbe gilt für neue formen und direkt für die aktuelle auswahl
+  const pickFill = (c: string) => {
+    setFill(c);
+    if (selectedId !== null) patchShape(selectedId, { fill: c });
   };
 
   const removeSelected = () => {
@@ -84,7 +96,7 @@ export function App() {
           {PALETTE.map((c) => (
             <button
               key={c}
-              onClick={() => setFill(c)}
+              onClick={() => pickFill(c)}
               aria-label={`fill ${c}`}
               style={{
                 width: 20,
@@ -112,6 +124,17 @@ export function App() {
           onSelect={setSelectedId}
           onCreateAt={create}
           onMove={moveShape}
+          onTransform={(id, t) =>
+            patchShape(id, {
+              x: t.x,
+              y: t.y,
+              w: t.w,
+              h: t.h,
+              rotation: t.rotation,
+            })
+          }
+          peers={peers}
+          onCursorMove={(x, y) => setLocal({ x, y }, selectedId === null ? [] : [selectedId])}
           width={window.innerWidth}
           height={window.innerHeight - 50}
         />

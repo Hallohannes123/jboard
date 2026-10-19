@@ -1,4 +1,4 @@
 # server/
 
-Hier kommt der WebSocket-Relay für Räume und Presence hin. Der Server ist im
-aktuellen Stand noch leer.
+WebSocket-Relay für Räume. Dokument-Updates und Presence laufen über getrennte
+Kanäle; die Dokument-Daten bleiben undurchsichtige Binärdaten.

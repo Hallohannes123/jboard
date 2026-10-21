@@ -9,6 +9,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./yjs": {
+      "types": "./dist/adapters/yjs.d.ts",
+      "default": "./dist/adapters/yjs.js"
+    },
+    "./automerge": {
+      "types": "./dist/adapters/automerge.d.ts",
+      "default": "./dist/adapters/automerge.js"
+    },
+    "./loro": {
+      "types": "./dist/adapters/loro.d.ts",
+      "default": "./dist/adapters/loro.js"
+    },
+    "./model": {
+      "types": "./dist/model.d.ts",
+      "default": "./dist/model.js"
     }
   },
   "scripts": {

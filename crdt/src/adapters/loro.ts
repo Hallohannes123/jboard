@@ -1,7 +1,14 @@
 import { LoroDoc, LoroMap, UndoManager } from "loro-crdt";
+import * as loroModule from "loro-crdt";
 import type { CrdtBackend, Snapshot, Update } from "../backend.js";
 import type { Shape, ShapeId, ShapeKind } from "../model.js";
 import { byZ } from "../model.js";
+
+interface WasmHandle {
+  memory?: { buffer: { byteLength: number } };
+}
+const WASM_KEY = ["__", "wasm"].join("");
+const wasmHandle = (loroModule as Record<string, unknown>)[WASM_KEY] as WasmHandle | undefined;
 
 const LOCAL = "local";
 
@@ -17,8 +24,11 @@ function writeShape(m: LoroMap, s: Shape): void {
   m.set("fill", s.fill);
   m.set("stroke", s.stroke);
   m.set("strokeWidth", s.strokeWidth);
+
   if (s.points !== undefined) m.set("points", s.points.slice());
+  else m.delete("points");
   if (s.text !== undefined) m.set("text", s.text);
+  else m.delete("text");
 }
 
 function readShape(m: LoroMap): Shape {
@@ -63,20 +73,48 @@ export class LoroBackend implements CrdtBackend {
   private shapes: LoroMap;
   private undoMgr: UndoManager;
 
+  private localCb?: (u: Update) => void;
+  private localUnsub?: () => void;
+
+  private changeCbs = new Set<() => void>();
+  private changeUnsub?: () => void;
+
+  private batching = false;
+
   constructor() {
     this.doc = new LoroDoc();
     this.shapes = this.doc.getMap("shapes");
-    this.undoMgr = new UndoManager(this.doc, {
-      excludeOriginPrefixes: ["remote"],
+    this.undoMgr = this.makeUndoManager();
+    this.wireDoc();
+  }
+
+  private makeUndoManager(): UndoManager {
+    return new UndoManager(this.doc, {});
+  }
+
+  private wireDoc(): void {
+    if (this.localCb !== undefined) {
+      this.localUnsub = this.doc.subscribeLocalUpdates((bytes) => this.localCb!(bytes));
+    }
+    this.changeUnsub = this.doc.subscribe(() => {
+      for (const cb of this.changeCbs) cb();
     });
   }
 
   load(snapshot?: Snapshot): void {
-    if (snapshot !== undefined) this.doc.import(snapshot);
+    if (snapshot === undefined) return;
+
+    this.localUnsub?.();
+    this.changeUnsub?.();
+    this.doc = new LoroDoc();
+    this.shapes = this.doc.getMap("shapes");
+    this.undoMgr = this.makeUndoManager();
+    this.doc.import(snapshot);
+    this.wireDoc();
+    for (const cb of this.changeCbs) cb();
   }
 
   getSnapshot(): Snapshot {
-    // offene änderungen vor dem export abschließen
     this.doc.commit();
     return this.doc.export({ mode: "snapshot" });
   }
@@ -86,11 +124,27 @@ export class LoroBackend implements CrdtBackend {
   }
 
   onLocalUpdate(cb: (u: Update) => void): void {
-    this.doc.subscribeLocalUpdates((bytes) => cb(bytes));
+    this.localUnsub?.();
+    this.localCb = cb;
+    this.localUnsub = this.doc.subscribeLocalUpdates((bytes) => cb(bytes));
   }
 
   transact(fn: () => void): void {
-    fn();
+    if (this.batching) {
+      fn();
+      return;
+    }
+    this.batching = true;
+    try {
+      fn();
+    } finally {
+      this.batching = false;
+    }
+    this.doc.commit({ origin: LOCAL });
+  }
+
+  private commitLocal(): void {
+    if (this.batching) return;
     this.doc.commit({ origin: LOCAL });
   }
 
@@ -98,7 +152,7 @@ export class LoroBackend implements CrdtBackend {
     let m = this.shapes.get(s.id) as LoroMap | undefined;
     if (m === undefined) m = this.shapes.setContainer(s.id, new LoroMap());
     writeShape(m, s);
-    this.doc.commit({ origin: LOCAL });
+    this.commitLocal();
   }
 
   patchShape(id: ShapeId, patch: Partial<Shape>): void {
@@ -109,12 +163,12 @@ export class LoroBackend implements CrdtBackend {
       if (v !== undefined) m.set(key, v);
     }
     if (patch.points !== undefined) m.set("points", patch.points.slice());
-    this.doc.commit({ origin: LOCAL });
+    this.commitLocal();
   }
 
   deleteShape(id: ShapeId): void {
     this.shapes.delete(id);
-    this.doc.commit({ origin: LOCAL });
+    this.commitLocal();
   }
 
   getShape(id: ShapeId): Shape | undefined {
@@ -123,7 +177,6 @@ export class LoroBackend implements CrdtBackend {
   }
 
   getAllShapes(): Shape[] {
-    // z bestimmt die zeichenreihenfolge
     const out: Shape[] = [];
     for (const key of this.shapes.keys()) {
       const m = this.shapes.get(key) as LoroMap | undefined;
@@ -141,6 +194,12 @@ export class LoroBackend implements CrdtBackend {
   }
 
   subscribe(cb: () => void): () => void {
-    return this.doc.subscribe(() => cb());
+    this.changeCbs.add(cb);
+    return () => this.changeCbs.delete(cb);
+  }
+
+  wasmMemoryBytes(): number | null {
+    const bytes = wasmHandle?.memory?.buffer.byteLength;
+    return typeof bytes === "number" ? bytes : null;
   }
 }

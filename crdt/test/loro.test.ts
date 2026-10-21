@@ -86,6 +86,24 @@ describe("loro adapter", () => {
     expect(a.getSnapshot()).toEqual(b.getSnapshot());
   });
 
+  it("a purely remote import never becomes undoable on the local arm (C8)", () => {
+    const a = new LoroBackend();
+    const b = new LoroBackend();
+    const toA: Uint8Array[] = [];
+    b.onLocalUpdate((u) => toA.push(u));
+
+    const z = keyBetween(null, null);
+    a.putShape(makeShape("local", z));
+    b.putShape(makeShape("remote", keyBetween(z, null)));
+    for (const u of toA) a.applyRemote(u);
+
+    a.undo();
+    a.undo();
+    const ids = a.getAllShapes().map((s) => s.id);
+    expect(ids).not.toContain("local");
+    expect(ids).toContain("remote");
+  });
+
   it("fires subscribe on local and remote changes", () => {
     const a = new LoroBackend();
     const b = new LoroBackend();

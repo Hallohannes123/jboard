@@ -17,12 +17,9 @@ export interface Shape {
   text?: string;
 }
 
-// fractional indexing für die z-reihenfolge
-
 const DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const BASE = DIGITS.length;
 
-// fehlende stellen liegen unten bei 0, oben bei BASE
 function loDigit(s: string | null, i: number): number {
   if (s === null || i >= s.length) return 0;
   return DIGITS.indexOf(s[i]!);
@@ -37,6 +34,12 @@ export function keyBetween(a: string | null, b: string | null): string {
     throw new Error(`keyBetween expects a < b, got a=${a} b=${b}`);
   }
 
+  if (b !== null && /^0*$/.test(b)) {
+    throw new Error(
+      `keyBetween: no key sorts below all-zeros bound b=${JSON.stringify(b)} — reseed`,
+    );
+  }
+
   let out = "";
   for (let i = 0; ; i++) {
     const lo = loDigit(a, i);
@@ -44,6 +47,7 @@ export function keyBetween(a: string | null, b: string | null): string {
     if (lo + 1 < hi) {
       return out + DIGITS[lo + Math.floor((hi - lo) / 2)];
     }
+
     out += DIGITS[lo];
   }
 }

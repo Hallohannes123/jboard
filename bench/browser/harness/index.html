@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CRDT browser bench harness</title>
+  </head>
+  <body>
+    <!-- Deliberately bare: this page exists only so Playwright can drive real,
+         in-browser WASM init and cold-start timing against the deployed artifact
+         (spec §6 fairness rule 3 — measure what ships, never a Node binding). The
+         measurement code is injected per arm by the test via a dynamic import. -->
+    <div id="status">harness ready</div>
+    <script type="module" src="./driver.ts"></script>
+  </body>
+</html>

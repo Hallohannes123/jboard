@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutomergeBackend } from "../src/adapters/automerge.js";
+import { AutomergeBackend, UNDO_LIMIT } from "../src/adapters/automerge.js";
 import { keyBetween, type Shape } from "../src/model.js";
 
 function makeShape(id: string, z: string, over: Partial<Shape> = {}): Shape {
@@ -86,6 +86,101 @@ describe("automerge adapter", () => {
     expect(s?.x).toBe(1);
     expect(s?.fill).toBe("#123");
     expect(a.getSnapshot()).toEqual(b.getSnapshot());
+  });
+
+  it("undo of a local create keeps a shape a peer created concurrently (C1)", () => {
+    const a = new AutomergeBackend();
+    const b = new AutomergeBackend();
+    connect(a, b);
+
+    const z = keyBetween(null, null);
+    a.putShape(makeShape("s1", z));
+    b.putShape(makeShape("s2", keyBetween(z, null)));
+    a.undo();
+
+    const ids = a.getAllShapes().map((s) => s.id);
+    expect(ids).not.toContain("s1");
+    expect(ids).toContain("s2");
+    expect(a.getAllShapes()).toEqual(b.getAllShapes());
+  });
+
+  it("undo of a local field edit keeps a peer's edit to a different field (C1)", () => {
+    const a = new AutomergeBackend();
+    const b = new AutomergeBackend();
+    connect(a, b);
+
+    const z = keyBetween(null, null);
+    a.putShape(makeShape("s1", z, { x: 1, fill: "#fff" }));
+    a.patchShape("s1", { x: 99 });
+    b.patchShape("s1", { fill: "#f00" });
+    a.undo();
+
+    const s = a.getShape("s1");
+    expect(s?.x).toBe(1);
+    expect(s?.fill).toBe("#f00");
+    expect(a.getAllShapes()).toEqual(b.getAllShapes());
+  });
+
+  it("redo reapplies an undone local create without disturbing remote work (C1)", () => {
+    const a = new AutomergeBackend();
+    const b = new AutomergeBackend();
+    connect(a, b);
+
+    const z = keyBetween(null, null);
+    a.putShape(makeShape("s1", z));
+    b.putShape(makeShape("s2", keyBetween(z, null)));
+    a.undo();
+    a.redo();
+
+    const ids = a.getAllShapes().map((s) => s.id);
+    expect(ids).toContain("s1");
+    expect(ids).toContain("s2");
+    expect(a.getAllShapes()).toEqual(b.getAllShapes());
+  });
+
+  it("bounds the undo stack to a fixed depth, dropping the oldest frames (C9)", () => {
+    const be = new AutomergeBackend();
+    const total = UNDO_LIMIT + 5;
+    let prev: string | null = null;
+    for (let i = 0; i < total; i++) {
+      const z = keyBetween(prev, null);
+      be.putShape(makeShape(`s${i}`, z));
+      prev = z;
+    }
+
+    for (let i = 0; i < total + 10; i++) be.undo();
+
+    expect(be.getAllShapes()).toHaveLength(total - UNDO_LIMIT);
+    const ids = be.getAllShapes().map((s) => s.id);
+    expect(ids).toContain("s0");
+    expect(ids).not.toContain(`s${total - 1}`);
+  });
+
+  it("a no-op undo emits nothing and leaves the redo stack usable (C10)", () => {
+    const a = new AutomergeBackend();
+    const b = new AutomergeBackend();
+    const toA: Uint8Array[] = [];
+    const toB: Uint8Array[] = [];
+    a.onLocalUpdate((u) => toB.push(u));
+    b.onLocalUpdate((u) => toA.push(u));
+
+    const z = keyBetween(null, null);
+    a.putShape(makeShape("s1", z));
+    for (const u of toB) b.applyRemote(u);
+    toB.length = 0;
+    b.deleteShape("s1");
+    for (const u of toA) a.applyRemote(u);
+    toB.length = 0;
+
+    let emits = 0;
+    a.onLocalUpdate(() => emits++);
+    a.undo();
+    expect(emits, "a no-op undo must not emit").toBe(0);
+    expect(a.getShape("s1")).toBeUndefined();
+
+    a.redo();
+    expect(emits, "a redo of a no-op undo must not emit").toBe(0);
+    expect(a.getShape("s1")).toBeUndefined();
   });
 
   it("fires subscribe on local and remote changes", () => {

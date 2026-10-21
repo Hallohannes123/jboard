@@ -35,7 +35,6 @@ class Rooms {
     if (set.size === 0) this.peers.delete(room);
   }
 
-  // an alle im raum außer den absender schicken
   broadcast(room: string, from: WebSocket, blob: Buffer): void {
     const set = this.peers.get(room);
     if (set === undefined) return;
@@ -49,7 +48,10 @@ export function createRelay() {
   const http = createServer();
   const docRooms = new Rooms();
   const presenceRooms = new Rooms();
-  const lastDocSnapshot = new Map<string, Buffer>();
+
+  const MAX_LOG = 10_000;
+  // alle verpassten updates in reihenfolge nachliefern
+  const docLog = new Map<string, Buffer[]>();
 
   const docWss = new WebSocketServer({ noServer: true });
   const presenceWss = new WebSocketServer({ noServer: true });
@@ -62,13 +64,17 @@ export function createRelay() {
     }
     docRooms.join(room, ws);
 
-    // der letzte stand reicht neuen teilnehmern zum aufholen
-    const cached = lastDocSnapshot.get(room);
-    if (cached !== undefined) ws.send(cached);
+    for (const blob of docLog.get(room) ?? []) ws.send(blob);
 
     ws.on("message", (data: RawData) => {
       const blob = toBuffer(data);
-      lastDocSnapshot.set(room, blob);
+      let log = docLog.get(room);
+      if (log === undefined) {
+        log = [];
+        docLog.set(room, log);
+      }
+      log.push(blob);
+      if (log.length > MAX_LOG) log.shift();
       docRooms.broadcast(room, ws, blob);
     });
     ws.on("close", () => docRooms.leave(room, ws));
@@ -87,7 +93,6 @@ export function createRelay() {
     ws.on("close", () => presenceRooms.leave(room, ws));
   });
 
-  // dokument und presence bleiben zwei getrennte kanäle
   http.on("upgrade", (req, socket, head) => {
     const url = req.url ?? "";
     if (url.startsWith("/doc/")) {

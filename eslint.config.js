@@ -2,16 +2,28 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/build/**", "**/node_modules/**", "**/*.tsbuildinfo"] },
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
   {
+    ignores: ["**/distbuildnode_modules*.tsbuildinfo", "**/test-resultsplaywright-report*.mjs"],
     languageOptions: {
-      ecmaVersion: 2023,
-      sourceType: "module",
+      globals: { process: "readonly", URL: "readonly", console: "readonly" },
     },
-    rules: {
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+  },
+  {
+    files: ["bench/browser/harness*.ts"],
+    languageOptions: {
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        location: "readonly",
+        performance: "readonly",
+        URLSearchParams: "readonly",
+      },
+    },
+  },
+  {
+    files: ["bench/browser*.spec.ts"],
+    languageOptions: {
+      globals: { console: "readonly", window: "readonly" },
     },
   },
 );

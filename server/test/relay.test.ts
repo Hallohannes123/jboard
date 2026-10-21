@@ -5,7 +5,6 @@ import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
 import { createRelay } from "../src/index.js";
 
-// in manchen ci-umgebungen dürfen tests keinen port öffnen
 const canBind = await new Promise<boolean>((resolve) => {
   const probe = createServer();
   probe.once("error", () => resolve(false));
@@ -43,7 +42,6 @@ describe.skipIf(!canBind)("relay", () => {
     });
   }
 
-  // die erste nachricht kann direkt beim verbinden kommen
   function openCapturingFirst(path: string): {
     ws: WebSocket;
     first: Promise<Buffer>;
@@ -56,10 +54,24 @@ describe.skipIf(!canBind)("relay", () => {
     return { ws, first };
   }
 
+  function openCollecting(path: string, n: number): { ws: WebSocket; frames: Promise<Buffer[]> } {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+    ws.binaryType = "nodebuffer";
+    const out: Buffer[] = [];
+    const frames = new Promise<Buffer[]>((resolve) => {
+      ws.on("message", (data) => {
+        out.push(data as Buffer);
+        if (out.length === n) resolve(out);
+      });
+    });
+    return { ws, frames };
+  }
+
   it("fans a doc blob out to other peers in the same room but not the sender", async () => {
     const a = await open("/doc/room1");
     const b = await open("/doc/room1");
     const got = nextMessage(b);
+
     let aEchoed = false;
     a.once("message", () => (aEchoed = true));
 
@@ -93,6 +105,20 @@ describe.skipIf(!canBind)("relay", () => {
 
     const { ws: b, first } = openCapturingFirst("/doc/late");
     expect(await first).toEqual(Buffer.from([7, 7, 7]));
+    a.close();
+    b.close();
+  });
+
+  it("replays every missed update to a reconnecting peer, not just the last", async () => {
+    const a = await open("/doc/log");
+    a.send(Buffer.from([1]));
+    a.send(Buffer.from([2]));
+    a.send(Buffer.from([3]));
+    await new Promise((r) => setTimeout(r, 20));
+
+    const { ws: b, frames } = openCollecting("/doc/log", 3);
+    const got = await frames;
+    expect(got).toEqual([Buffer.from([1]), Buffer.from([2]), Buffer.from([3])]);
     a.close();
     b.close();
   });

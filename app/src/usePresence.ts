@@ -8,9 +8,11 @@ export function usePresence(room: string, identity: { name: string; color: strin
   const chanRef = useRef<RelayPresence | null>(null);
   const [peers, setPeers] = useState<Map<string, PresenceState>>(new Map());
 
+  const peerIdRef = useRef<string | null>(null);
+  if (peerIdRef.current === null) peerIdRef.current = crypto.randomUUID();
+
   useEffect(() => {
-    const peerId = crypto.randomUUID();
-    const chan = new RelayPresence(`${RELAY}/presence/${room}`, peerId);
+    const chan = new RelayPresence(`${RELAY}/presence/${room}`, peerIdRef.current!);
     chan.onRemote(setPeers);
     chanRef.current = chan;
     return () => {

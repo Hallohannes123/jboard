@@ -1,5 +1,5 @@
 {
-  "name": "crdt-whiteboard-testbed",
+  "name": "jboard",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.18.0",
@@ -14,15 +14,19 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "bench": "node --expose-gc bench/dist/run-all.js",
-    "bench:browser": "playwright test bench/browser"
+    "analyze": "node bench/dist/analyze-run.js",
+    "bench:browser": "playwright test --config bench/browser/playwright.config.ts",
+    "bench:browser:report": "node bench/dist/browser-report.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.0",
     "@types/node": "26.1.2",
     "eslint": "10.8.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0",
+    "vite": "8.1.5",
     "vitest": "4.1.10"
   }
 }

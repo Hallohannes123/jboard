@@ -7,6 +7,14 @@ build/
 
 .vite/
 coverage/
+bench/results/*.json
+bench/results/*.csv
+!bench/results/.gitkeep
+
+bench/browser/dist/
+bench/results/pw-artifacts/
+**/test-results/
+**/playwright-report/
 .env
 .env.*
 !.env.example

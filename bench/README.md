@@ -1,4 +1,4 @@
 # bench/
 
-Hier landen die Benchmarks für die drei Adapter. Aktuell gibt es noch keinen
-echten Lauf.
+Reproduzierbare Szenarien für alle drei Adapter. Der Lauf prüft zuerst die
+Konvergenz und schreibt danach Zeit- und Größenmessungen als JSON.

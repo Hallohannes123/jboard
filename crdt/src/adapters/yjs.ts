@@ -3,7 +3,6 @@ import type { CrdtBackend, Snapshot, Update } from "../backend.js";
 import type { Shape, ShapeId, ShapeKind } from "../model.js";
 import { byZ } from "../model.js";
 
-// eigene und empfangene änderungen getrennt halten
 const LOCAL = Symbol("local");
 const REMOTE = Symbol("remote");
 
@@ -33,8 +32,11 @@ function writeShape(m: Y.Map<unknown>, s: Shape): void {
   m.set("fill", s.fill);
   m.set("stroke", s.stroke);
   m.set("strokeWidth", s.strokeWidth);
+
   if (s.points !== undefined) m.set("points", s.points.slice());
+  else m.delete("points");
   if (s.text !== undefined) m.set("text", s.text);
+  else m.delete("text");
 }
 
 function readShape(m: Y.Map<unknown>): Shape {
@@ -65,23 +67,52 @@ export class YjsBackend implements CrdtBackend {
   private shapes: Y.Map<Y.Map<unknown>>;
   private undoMgr: Y.UndoManager;
 
+  private localCb?: (u: Update) => void;
+  private localListener?: (update: Uint8Array, origin: unknown) => void;
+
+  private changeCbs = new Set<() => void>();
+
   constructor() {
+    this.doc = new Y.Doc();
+    this.shapes = this.doc.getMap<Y.Map<unknown>>("shapes");
+
+    this.undoMgr = new Y.UndoManager(this.shapes, {
+      trackedOrigins: new Set([LOCAL]),
+      captureTimeout: 0,
+    });
+    this.wireDoc();
+  }
+
+  private wireDoc(): void {
+    if (this.localCb !== undefined) {
+      this.localListener = (update: Uint8Array, origin: unknown) => {
+        if (origin !== REMOTE) this.localCb!(update);
+      };
+      this.doc.on("update", this.localListener);
+    }
+    this.shapes.observeDeep(this.deepObserver);
+  }
+
+  private deepObserver = (): void => {
+    for (const cb of this.changeCbs) cb();
+  };
+
+  load(snapshot?: Snapshot): void {
+    if (snapshot === undefined) return;
+
+    this.doc.destroy();
     this.doc = new Y.Doc();
     this.shapes = this.doc.getMap<Y.Map<unknown>>("shapes");
     this.undoMgr = new Y.UndoManager(this.shapes, {
       trackedOrigins: new Set([LOCAL]),
       captureTimeout: 0,
     });
-  }
-
-  load(snapshot?: Snapshot): void {
-    if (snapshot !== undefined) {
-      Y.applyUpdate(this.doc, snapshot, REMOTE);
-    }
+    Y.applyUpdate(this.doc, snapshot, REMOTE);
+    this.wireDoc();
+    this.deepObserver();
   }
 
   getSnapshot(): Snapshot {
-    // frisches dokument für den snapshot
     const fresh = new Y.Doc();
     Y.applyUpdate(fresh, Y.encodeStateAsUpdate(this.doc));
     return Y.encodeStateAsUpdate(fresh);
@@ -92,9 +123,12 @@ export class YjsBackend implements CrdtBackend {
   }
 
   onLocalUpdate(cb: (u: Update) => void): void {
-    this.doc.on("update", (update: Uint8Array, origin: unknown) => {
+    if (this.localListener !== undefined) this.doc.off("update", this.localListener);
+    this.localCb = cb;
+    this.localListener = (update: Uint8Array, origin: unknown) => {
       if (origin !== REMOTE) cb(update);
-    });
+    };
+    this.doc.on("update", this.localListener);
   }
 
   transact(fn: () => void): void {
@@ -136,7 +170,6 @@ export class YjsBackend implements CrdtBackend {
   }
 
   getAllShapes(): Shape[] {
-    // z bestimmt die zeichenreihenfolge
     const out: Shape[] = [];
     this.shapes.forEach((m) => out.push(readShape(m)));
     return out.sort(byZ);
@@ -151,8 +184,11 @@ export class YjsBackend implements CrdtBackend {
   }
 
   subscribe(cb: () => void): () => void {
-    const handler = (): void => cb();
-    this.shapes.observeDeep(handler);
-    return () => this.shapes.unobserveDeep(handler);
+    this.changeCbs.add(cb);
+    return () => this.changeCbs.delete(cb);
+  }
+
+  wasmMemoryBytes(): number | null {
+    return null;
   }
 }

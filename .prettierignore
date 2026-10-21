@@ -5,4 +5,8 @@ pnpm-lock.yaml
 *.tsbuildinfo
 
 # Markdown bleibt handformatiert
+**/test-results/
+**/playwright-report/
+bench/browser/dist/
+
 *.md

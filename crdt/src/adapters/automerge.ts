@@ -43,6 +43,83 @@ type ShapeRecord = {
 
 type DocShape = { shapes: Record<string, ShapeRecord> };
 
+const ALL_FIELDS = [
+  "id",
+  "kind",
+  "x",
+  "y",
+  "w",
+  "h",
+  "rotation",
+  "z",
+  "fill",
+  "stroke",
+  "strokeWidth",
+  "text",
+  "points",
+] as const;
+
+type Touched = Map<string, Set<string> | "*">;
+interface UndoFrame {
+  source: A.Doc<DocShape>;
+  touched: Touched;
+}
+
+function touchedPaths(doc: A.Doc<DocShape>, before: A.Heads, after: A.Heads): Touched {
+  const touched: Touched = new Map();
+  for (const patch of A.diff(doc, before, after)) {
+    const [root, id, field] = patch.path;
+    if (root !== "shapes" || typeof id !== "string") continue;
+    if (field === undefined) {
+      touched.set(id, "*");
+      continue;
+    }
+    const cur = touched.get(id);
+    if (cur === "*") continue;
+    const set = cur ?? new Set<string>();
+    set.add(String(field));
+    touched.set(id, set);
+  }
+  return touched;
+}
+
+function cloneFields(src: ShapeRecord): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of ALL_FIELDS) {
+    const v = (src as Record<string, unknown>)[f];
+    if (v !== undefined) out[f] = Array.isArray(v) ? v.slice() : v;
+  }
+  return out;
+}
+
+function reconcileTouched(d: DocShape, source: DocShape, touched: Touched): void {
+  for (const [id, fields] of touched) {
+    const src = source.shapes[id];
+    if (fields === "*") {
+      if (src === undefined) delete d.shapes[id];
+      else d.shapes[id] = cloneFields(src) as unknown as ShapeRecord;
+      continue;
+    }
+    if (src === undefined) {
+      delete d.shapes[id];
+      continue;
+    }
+    let tgt = d.shapes[id];
+    if (tgt === undefined) {
+      tgt = cloneFields(src) as unknown as ShapeRecord;
+      d.shapes[id] = tgt;
+      continue;
+    }
+    const t = tgt as unknown as Record<string, unknown>;
+    const s = src as unknown as Record<string, unknown>;
+    for (const f of fields) {
+      const v = s[f];
+      if (v === undefined) delete t[f];
+      else t[f] = Array.isArray(v) ? v.slice() : v;
+    }
+  }
+}
+
 function toRecord(s: Shape): ShapeRecord {
   const r: ShapeRecord = {
     id: s.id,
@@ -95,6 +172,8 @@ const SCALAR_FIELDS = [
   "text",
 ] as const;
 
+export const UNDO_LIMIT = 100;
+
 export class AutomergeBackend implements CrdtBackend {
   readonly kind = "automerge" as const;
 
@@ -102,20 +181,26 @@ export class AutomergeBackend implements CrdtBackend {
   private localCb?: (u: Update) => void;
   private changeCbs = new Set<() => void>();
 
-  // eigene stacks, weil automerge kein undo mitbringt
-  private undoStack: A.Doc<DocShape>[] = [];
-  private redoStack: A.Doc<DocShape>[] = [];
+  private undoStack: UndoFrame[] = [];
+  private redoStack: UndoFrame[] = [];
+
+  private txnFns: A.ChangeFn<DocShape>[] | null = null;
 
   constructor() {
     this.doc = A.load<DocShape>(ROOT_SEED, randomActor());
   }
 
   load(snapshot?: Snapshot): void {
-    if (snapshot !== undefined) this.doc = A.load<DocShape>(snapshot, randomActor());
+    if (snapshot !== undefined) {
+      this.doc = A.load<DocShape>(snapshot, randomActor());
+      this.undoStack = [];
+      this.redoStack = [];
+
+      this.fireChange();
+    }
   }
 
   getSnapshot(): Snapshot {
-    // änderungen für den snapshot sortiert nachspielen
     const changes = A.getAllChanges(this.doc)
       .slice()
       .sort((x, y) => compareBytes(x, y));
@@ -125,7 +210,11 @@ export class AutomergeBackend implements CrdtBackend {
   }
 
   applyRemote(update: Update): void {
-    [this.doc] = A.applyChanges(this.doc, [update]);
+    try {
+      [this.doc] = A.applyChanges(this.doc, [update]);
+    } catch {
+      this.doc = A.merge(this.doc, A.load<DocShape>(update, randomActor()));
+    }
     this.fireChange();
   }
 
@@ -134,19 +223,56 @@ export class AutomergeBackend implements CrdtBackend {
   }
 
   transact(fn: () => void): void {
-    fn();
+    if (this.txnFns !== null) {
+      fn();
+      return;
+    }
+    const batch: A.ChangeFn<DocShape>[] = [];
+    this.txnFns = batch;
+    try {
+      fn();
+    } finally {
+      this.txnFns = null;
+    }
+    if (batch.length === 0) return;
+    this.commit((d) => {
+      for (const change of batch) change(d);
+    });
   }
 
   private mutate(fn: A.ChangeFn<DocShape>): void {
-    this.undoStack.push(this.doc);
+    if (this.txnFns !== null) {
+      this.txnFns.push(fn);
+      return;
+    }
+    this.commit(fn);
+  }
+
+  private commit(fn: A.ChangeFn<DocShape>): void {
+    const before = this.doc;
+    const beforeHeads = A.getHeads(before);
+    const next = A.change(before, fn);
+    const touched = touchedPaths(next, beforeHeads, A.getHeads(next));
+
+    if (touched.size === 0) {
+      this.doc = next;
+      return;
+    }
+    this.pushBounded(this.undoStack, { source: before, touched });
     this.redoStack = [];
-    this.doc = A.change(this.doc, fn);
+    this.doc = next;
     this.emitDelta();
     this.fireChange();
   }
 
+  private pushBounded(stack: UndoFrame[], frame: UndoFrame): void {
+    stack.push(frame);
+    if (stack.length > UNDO_LIMIT) stack.shift();
+  }
+
   private emitDelta(): void {
     if (this.localCb === undefined) return;
+
     const delta = A.getLastLocalChange(this.doc);
     if (delta !== undefined) this.localCb(delta);
   }
@@ -154,12 +280,25 @@ export class AutomergeBackend implements CrdtBackend {
   putShape(s: Shape): void {
     const rec = toRecord(s);
     this.mutate((d) => {
-      d.shapes[s.id] = rec;
+      const existing = d.shapes[s.id];
+      if (existing === undefined) {
+        d.shapes[s.id] = rec;
+        return;
+      }
+
+      const target = existing;
+      for (const key of SCALAR_FIELDS) {
+        const v = rec[key];
+        if (v !== undefined) (target as Record<string, unknown>)[key] = v;
+        else if (target[key] !== undefined) delete (target as Record<string, unknown>)[key];
+      }
+      if (rec.points !== undefined) target.points = rec.points.slice();
+      else if (target.points !== undefined) delete target.points;
     });
   }
 
   patchShape(id: ShapeId, patch: Partial<Shape>): void {
-    if (this.doc.shapes[id] === undefined) return;
+    if (this.txnFns === null && this.doc.shapes[id] === undefined) return;
     this.mutate((d) => {
       const target = d.shapes[id];
       if (target === undefined) return;
@@ -172,8 +311,9 @@ export class AutomergeBackend implements CrdtBackend {
   }
 
   deleteShape(id: ShapeId): void {
-    if (this.doc.shapes[id] === undefined) return;
+    if (this.txnFns === null && this.doc.shapes[id] === undefined) return;
     this.mutate((d) => {
+      if (d.shapes[id] === undefined) return;
       delete d.shapes[id];
     });
   }
@@ -188,33 +328,25 @@ export class AutomergeBackend implements CrdtBackend {
   }
 
   undo(): void {
-    const prev = this.undoStack.pop();
-    if (prev === undefined) return;
-    this.redoStack.push(this.doc);
-    this.doc = A.change(this.doc, (d) => {
-      for (const id of Object.keys(d.shapes)) {
-        if (prev.shapes[id] === undefined) delete d.shapes[id];
-      }
-      for (const [id, rec] of Object.entries(prev.shapes)) {
-        d.shapes[id] = { ...rec };
-      }
-    });
-    this.emitDelta();
-    this.fireChange();
+    const frame = this.undoStack.pop();
+    if (frame === undefined) return;
+    this.reconcileFrame(frame, this.redoStack);
   }
 
   redo(): void {
-    const next = this.redoStack.pop();
-    if (next === undefined) return;
-    this.undoStack.push(this.doc);
-    this.doc = A.change(this.doc, (d) => {
-      for (const id of Object.keys(d.shapes)) {
-        if (next.shapes[id] === undefined) delete d.shapes[id];
-      }
-      for (const [id, rec] of Object.entries(next.shapes)) {
-        d.shapes[id] = { ...rec };
-      }
-    });
+    const frame = this.redoStack.pop();
+    if (frame === undefined) return;
+    this.reconcileFrame(frame, this.undoStack);
+  }
+
+  private reconcileFrame(frame: UndoFrame, inverseStack: UndoFrame[]): void {
+    const before = this.doc;
+    const beforeHeads = A.getHeads(before);
+    const next = A.change(before, (d) => reconcileTouched(d, frame.source, frame.touched));
+    const touched = touchedPaths(next, beforeHeads, A.getHeads(next));
+    this.pushBounded(inverseStack, { source: before, touched: frame.touched });
+    this.doc = next;
+    if (touched.size === 0) return;
     this.emitDelta();
     this.fireChange();
   }
@@ -222,6 +354,10 @@ export class AutomergeBackend implements CrdtBackend {
   subscribe(cb: () => void): () => void {
     this.changeCbs.add(cb);
     return () => this.changeCbs.delete(cb);
+  }
+
+  wasmMemoryBytes(): number | null {
+    return null;
   }
 
   private fireChange(): void {

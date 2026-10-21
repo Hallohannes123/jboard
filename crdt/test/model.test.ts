@@ -41,6 +41,21 @@ describe("fractional index", () => {
     expect(() => keyBetween("z", "a")).toThrow();
   });
 
+  it("throws instead of returning a larger key below an all-zeros bound (C4)", () => {
+    expect(() => keyBefore("0")).toThrow();
+    expect(() => keyBetween(null, "")).toThrow();
+    expect(() => keyBefore("00")).toThrow();
+  });
+
+  it("keeps send-to-back keys strictly decreasing across a long run (C4)", () => {
+    let k = keyBetween(null, null);
+    for (let i = 0; i < 80; i++) {
+      const next = keyBefore(k);
+      expect(next < k).toBe(true);
+      k = next;
+    }
+  });
+
   it("concurrent insert-to-front yields identical keys, resolved by id in byZ", () => {
     const neighbour = keyBetween(null, null);
     const k1 = keyBefore(neighbour);

@@ -1,10 +1,9 @@
 import type { Shape, ShapeId } from "./model.js";
 
-// Transport und Bench kennen nur Bytes
 export type Update = Uint8Array;
 export type Snapshot = Uint8Array;
 
-// gemeinsamer Einstieg für alle Backends
+// app und benchmark kennen nur dieses gemeinsame interface
 export interface CrdtBackend {
   readonly kind: "yjs" | "automerge" | "loro";
 
@@ -24,9 +23,10 @@ export interface CrdtBackend {
   undo(): void;
   redo(): void;
   subscribe(cb: () => void): () => void;
+
+  wasmMemoryBytes?(): number | null;
 }
 
-// Presence bleibt vom Dokument getrennt
 export interface PresenceState {
   cursor?: { x: number; y: number };
   selection?: ShapeId[];
@@ -34,6 +34,7 @@ export interface PresenceState {
   color: string;
 }
 
+// presence bleibt absichtlich neben dem dokument
 export interface PresenceChannel {
   setLocal(state: PresenceState): void;
   onRemote(cb: (peers: Map<string, PresenceState>) => void): void;
